@@ -1,4 +1,5 @@
 import streamlit as st
+import requests
 import trafilatura
 
 # Настройка страницы приложения
@@ -12,28 +13,47 @@ st.write(
     " без зайвих блоків."
 )
 
-
 # Функция для очистки
 def clear_text():
   st.session_state["url_input"] = ""
 
-
-# Поле ввода ссылки с привязкой к session_state
+# Поле ввода ссылки
 url = st.text_input(
     "Посилання на статтю:", key="url_input", placeholder="https://..."
 )
 
-# Кнопка сброса для удобства
 if st.button("Очистити поле"):
   clear_text()
   st.rerun()
 
 if url:
   with st.spinner("Збираємо текст та зображення..."):
-    downloaded = trafilatura.fetch_url(url)
+    # Добавляем заголовки браузера, чтобы сайты не блокировали запрос
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    
+    downloaded = None
+    try:
+      # Сначала пробуем скачать через requests с нормальными заголовками
+      response = requests.get(url, headers=headers, timeout=10)
+      if response.status_code == 200:
+        downloaded = response.text
+    except Exception as e:
+      pass
+
+    # Если через requests не получилось, пробуем стандартный метод trafilatura
+    if not downloaded:
+      downloaded = trafilatura.fetch_url(url)
 
     if downloaded:
       metadata = trafilatura.extract_metadata(downloaded)
+      
+      # Извлекаем контент со всеми блоками и картинками
       article_html = trafilatura.extract(
           downloaded,
           include_images=True,
@@ -60,10 +80,9 @@ if url:
 
       else:
         st.error(
-            "Не вдалося витягти текст із цієї сторінки. Можливо, сайт блокує"
-            " запити."
+            "Сторінку завантажено, але не вдалося витягти з неї текст. Можливо, структура сайту занадто складна."
         )
     else:
       st.error(
-          "Не вдалося завантажити сторінку. Перевірте правильність посилання."
+          "Не вдалося завантажити сторінку. Перевірте правильність посилання або чи працює сайт."
       )
