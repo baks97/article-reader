@@ -1,32 +1,29 @@
 import streamlit as st
 import trafilatura
 
-# Настройка страницы приложения
 st.set_page_config(
-    page_title="Универсальный читатель статей", page_icon="📖", layout="centered"
+    page_title="Універсальний читач статей", page_icon="📖", layout="centered"
 )
 
 st.title("📖 Універсальний читач статей")
 st.write(
-    "Введіть посилання на будь-яку статтю, і застосунок сформує чисту читалку"
+    "Введіть посилання на будь-яку статтю, і застосунок сформує чисту читатку"
     " без зайвих блоків."
 )
 
 
-# Функция для очистки
+# Функція для очищення через callback
 def clear_text():
   st.session_state["url_input"] = ""
 
 
-# Поле ввода ссылки с привязкой к session_state
+# Поле введення посилання з прив'язкою до session_state
 url = st.text_input(
     "Посилання на статтю:", key="url_input", placeholder="https://..."
 )
 
-# Кнопка сброса для удобства
-if st.button("Очистити поле"):
-  clear_text()
-  st.rerun()
+# Кнопка скидання з прив'язкою on_click (без умовних блоків та st.rerun)
+st.button("Очистити поле", on_click=clear_text)
 
 if url:
   with st.spinner("Збираємо текст та зображення..."):
@@ -55,7 +52,7 @@ if url:
 
         st.divider()
 
-        # Вывод статьи
+        # Вивід статті
         st.markdown(article_html, unsafe_allow_html=True)
 
       else:
