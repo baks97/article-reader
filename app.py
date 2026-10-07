@@ -13,7 +13,7 @@ url = st.text_input("Посилання на статтю:", key="url_input", pl
 st.button("Очистити поле", on_click=clear_text)
 
 # Спроба витягнути секретний ключ з Streamlit Secrets або з поля
-API_KEY = st.secrets.get("36c0c5c4bef81e270652dc8699e6e1fa", "")
+API_KEY = st.secrets.get("SCRAPERAPI_KEY", "")
 
 def fetch_via_scraperapi(target_url, api_key):
     """
