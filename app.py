@@ -5,7 +5,6 @@ import requests
 st.set_page_config(page_title="Універсальний читач статей", page_icon="📖", layout="centered")
 
 st.title("📖 Універсальний читач статей")
-st.write("Введіть посилання на будь-яку статтю, і застосунок сформує чисту читалку без зайвих блоків.")
 
 def clear_text():
     st.session_state["url_input"] = ""
@@ -13,44 +12,44 @@ def clear_text():
 url = st.text_input("Посилання на статтю:", key="url_input", placeholder="https://...")
 st.button("Очистити поле", on_click=clear_text)
 
-def fetch_with_jina(target_url):
+# Спроба витягнути секретний ключ з Streamlit Secrets або з поля
+API_KEY = st.secrets.get("36c0c5c4bef81e270652dc8699e6e1fa", "")
+
+def fetch_via_scraperapi(target_url, api_key):
     """
-    Проганяє URL через Jina Reader, який обходить блокування IP та Cloudflare.
+    Запит через ScraperAPI з увімкненим обходом Cloudflare (render=true)
     """
-    jina_url = f"https://r.jina.ai/{target_url}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "X-No-Cache": "true"
+    payload = {
+        'api_key': api_key,
+        'url': target_url,
+        'render': 'true',  # Обов'язково: рендерить JS і обходить Cloudflare
+        'country_code': 'us'
     }
     try:
-        response = requests.get(jina_url, headers=headers, timeout=20)
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=35)
         if response.status_code == 200:
             return response.text
-    except Exception:
-        pass
+    except Exception as e:
+        st.error(f"Помилка запиту: {e}")
     return None
 
 if url:
-    with st.spinner("Збираємо текст та зображення..."):
-        # 1. Спочатку пробуємо прямий запит
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        downloaded = None
-        
-        try:
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                downloaded = res.text
-        except Exception:
-            pass
+    with st.spinner("Обходимо Cloudflare та витягуємо статтю..."):
+        if not API_KEY:
+            st.warning("⚠️ Не знайдено API-ключ ScraperAPI. Спробуємо прямий запит...")
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            try:
+                res = requests.get(url, headers=headers, timeout=10)
+                html_content = res.text if res.status_code == 200 else None
+            except Exception:
+                html_content = None
+        else:
+            html_content = fetch_via_scraperapi(url, API_KEY)
 
-        # 2. Якщо прямий запит заблоковано, використовуємо обхід через Jina
-        if not downloaded:
-            downloaded = fetch_with_jina(url)
-
-        if downloaded:
-            metadata = trafilatura.extract_metadata(downloaded)
+        if html_content and "Attention Required! | Cloudflare" not in html_content:
+            metadata = trafilatura.extract_metadata(html_content)
             article_html = trafilatura.extract(
-                downloaded,
+                html_content,
                 include_images=True,
                 include_formatting=True,
                 output_format="html",
@@ -65,8 +64,6 @@ if url:
                 st.divider()
                 st.markdown(article_html, unsafe_allow_html=True)
             else:
-                # Якщо trafilatura не спарсила HTML від Jina, виводимо сирий текст від Jina
-                st.divider()
-                st.markdown(downloaded)
+                st.error("Текст статті не вдалося розпарсити.")
         else:
-            st.error("На жаль, сайт застосовує жорстке блокування або захист від ботів.")
+            st.error("Сайт заблокував запит (Cloudflare 403). Потрібен робочий ScraperAPI Key.")
