@@ -1,116 +1,78 @@
-import logging
-import sys
-import urllib.parse
 import streamlit as st
 import trafilatura
-from curl_cffi import requests
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+# ----------------------------------------------------------------------
+# Налаштування сторінки (має бути першою командою Streamlit)
+# ----------------------------------------------------------------------
+st.set_page_config(
+    page_title="Універсальний читач статей",
+    page_icon="📖",
+    layout="centered"
 )
-logger = logging.getLogger("ArticleReader")
 
+st.title("📖 Універсальний читач статей")
+st.write(
+    "Введіть посилання на будь-яку статтю, і застосунок сформує чисту читалку без зайвих блоків."
+)
 
-def normalize_url(target_url: str) -> str:
-  """Виправляє типові проблеми з редиректами (наприклад, додає www для epravda/pravda)."""
-  parsed = urllib.parse.urlparse(target_url)
-  # Авто-додавання www для сайтів Української Правди
-  if parsed.netloc in ["epravda.com.ua", "pravda.com.ua"]:
-    new_netloc = f"www.{parsed.netloc}"
-    parsed = parsed._replace(netloc=new_netloc)
-    logger.info(f"[URL FIX] Виправлено домен з {parsed.netloc} на {new_netloc}")
-  return urllib.parse.urlunparse(parsed)
+# Функція для очищення тексту в session_state
+def clear_text():
+    st.session_state["url_input"] = ""
 
+# Поле введення посилання
+url = st.text_input(
+    "Посилання на статтю:", 
+    key="url_input", 
+    placeholder="https://..."
+)
 
-def fetch_content_with_logs(target_url):
-  target_url = normalize_url(target_url)
+# Кнопка очищення
+st.button("Очистити поле", on_click=clear_text)
 
-  logger.info("=" * 60)
-  logger.info(f"СТАРТ ОБРОБКИ URL: {target_url}")
+# ----------------------------------------------------------------------
+# Логіка завантаження та витягування тексту
+# ----------------------------------------------------------------------
+if url:
+    with st.spinner("Збираємо текст та зображення..."):
+        # Додаємо заголовки, щоб сайти не блокували запити з хмари (Streamlit Cloud)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        # Отримуємо контент через trafilatura
+        downloaded = trafilatura.fetch_url(url, no_ssl=True)
+        
+        if downloaded:
+            metadata = trafilatura.extract_metadata(downloaded)
+            article_html = trafilatura.extract(
+                downloaded,
+                include_images=True,
+                include_formatting=True,
+                output_format="html",
+            )
 
-  # --- ЕТАП 1: Запит із повним набором браузерних заголовків та TLS Chrome ---
-  logger.info("[ЕТАП 1] Прямий запит через curl_cffi (Chrome 120)...")
-  headers_stage1 = {
-      "User-Agent": (
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-          " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      ),
-      "Accept": (
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-      ),
-      "Accept-Language": "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Referer": "https://www.google.com/",
-  }
+            if article_html:
+                st.divider()
 
-  try:
-    response = requests.get(
-        target_url,
-        headers=headers_stage1,
-        impersonate="chrome120",
-        timeout=10,
-        allow_redirects=True,
-    )
-    logger.info(f"[ЕТАП 1] HTTP Статус: {response.status_code}")
+                if metadata and metadata.title:
+                    st.markdown(
+                        f"<h1 style='font-size: 26px;'>{metadata.title}</h1>",
+                        unsafe_allow_html=True,
+                    )
 
-    if response.status_code == 200:
-      logger.info("[ЕТАП 1] УСПІХ!")
-      return response.text
-  except Exception as e:
-    logger.warning(f"[ЕТАП 1] Збій: {e}")
+                if metadata and metadata.date:
+                    st.caption(f"Дата публікації: {metadata.date}")
 
-  # --- ЕТАП 2: Jina AI Reader (Правильний формат з заголовком) ---
-  logger.info("[ЕТАП 2] Запуск Jina Reader API з маскуванням Referer...")
-  jina_url = f"https://r.jina.ai/{target_url}"
-  jina_headers = {
-      "Accept": "text/html",
-      "X-No-Cache": "true",
-      "X-With-Generated-Alt": "false",
-  }
+                st.divider()
 
-  try:
-    jina_response = requests.get(
-        jina_url,
-        headers=jina_headers,
-        impersonate="chrome120",
-        timeout=15,
-    )
-    logger.info(f"[ЕТАП 2] Jina API HTTP Статус: {jina_response.status_code}")
+                # Відображення основного вмісту
+                st.markdown(article_html, unsafe_allow_html=True)
 
-    if (
-        jina_response.status_code == 200
-        and len(jina_response.text.strip()) > 200
-    ):
-      logger.info("[ЕТАП 2] УСПІХ через Jina AI!")
-      return jina_response.text
-  except Exception as e:
-    logger.warning(f"[ЕТАП 2] Збій Jina API: {e}")
-
-  # --- ЕТАП 3: Безкоштовний проксі-шлюз AllOrigins (Резервний варіант для Cloudflare) ---
-  logger.info("[ЕТАП 3] Спроба через AllOrigins CORS Proxy...")
-  allorigins_url = (
-      f"https://api.allorigins.win/get?url={urllib.parse.quote(target_url)}"
-  )
-
-  try:
-    proxy_response = requests.get(
-        allorigins_url, impersonate="chrome120", timeout=15
-    )
-    logger.info(
-        f"[ЕТАП 3] AllOrigins HTTP Статус: {proxy_response.status_code}"
-    )
-
-    if proxy_response.status_code == 200:
-      import json
-
-      data = json.loads(proxy_response.text)
-      html_contents = data.get("contents", "")
-      if html_contents and len(html_contents) > 300:
-        logger.info("[ЕТАП 3] УСПІХ через AllOrigins!")
-        return html_contents
-  except Exception as e:
-    logger.warning(f"[ЕТАП 3] Збій AllOrigins: {e}")
-
-  logger.error("[ФІНАЛ] Жоден із 3 методів не зміг обійти захист сайту.")
-  return None
+            else:
+                st.error(
+                    "Не вдалося витягти текст із цієї сторінки. Можливо, сайт використовує складні скрипти або блокує парсинг."
+                )
+        else:
+            st.error(
+                "Не вдалося завантажити сторінку. Перевірте правильність посилання або спробуйте пізніше."
+            )
